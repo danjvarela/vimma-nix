@@ -41,15 +41,62 @@
         hicolor-icon-theme adwaita-icon-theme gruvbox-plus-icons
       ];
 
-      mkFhs = name: exe: pkgs.buildFHSEnv {
-        inherit name;
+      # The tarball ships no .desktop file; upstream's own packages generate
+      # one. This mirrors the entry in the release's PKGBUILD.
+      # StartupWMClass is the load-bearing field: Gecko sets WM_CLASS from
+      # application.ini's RemotingName (vimma-vimma), and without the match a
+      # launcher tracks the running browser as a second, iconless window.
+      desktopEntry = pkgs.writeText "vimma.desktop" ''
+        [Desktop Entry]
+        Version=1.5
+        Type=Application
+        Name=Vimma
+        GenericName=Web Browser
+        Comment=Browse the web from the keyboard
+        Exec=@out@/bin/vimma %U
+        Icon=vimma
+        Terminal=false
+        StartupNotify=true
+        StartupWMClass=vimma-vimma
+        Categories=Network;WebBrowser;
+        MimeType=application/json;application/pdf;application/rdf+xml;application/rss+xml;application/x-xpinstall;application/xhtml+xml;application/xml;audio/flac;audio/ogg;audio/webm;image/avif;image/gif;image/jpeg;image/png;image/svg+xml;image/webp;text/html;text/xml;video/ogg;video/webm;x-scheme-handler/http;x-scheme-handler/https;
+        Keywords=Internet;WWW;Browser;Web;Explorer;vim;
+        Actions=new-window;new-private-window;open-profile-manager;
+
+        [Desktop Action new-window]
+        Name=New Window
+        Exec=@out@/bin/vimma --new-window %U
+
+        [Desktop Action new-private-window]
+        Name=New Private Window
+        Exec=@out@/bin/vimma --private-window %U
+
+        [Desktop Action open-profile-manager]
+        Name=Open the Profile Manager
+        Exec=@out@/bin/vimma --ProfileManager
+      '';
+
+      vimma = pkgs.buildFHSEnv {
+        name = "vimma";
         targetPkgs = runtimeDeps;
-        runScript = pkgs.writeShellScript "${name}-run" ''
-          exec ${dist}/${exe} "$@"
+        runScript = pkgs.writeShellScript "vimma-run" ''
+          exec ${dist}/vimma "$@"
+        '';
+
+        # Exec points at the FHS wrapper, not the dist binary, so a launcher
+        # starts the browser through the same sandbox the shell does.
+        extraInstallCommands = ''
+          install -d $out/share/applications
+          substitute ${desktopEntry} $out/share/applications/vimma.desktop \
+            --subst-var out
+
+          for size in 16 32 48 64 128; do
+            install -Dm644 \
+              ${dist}/browser/chrome/icons/default/default$size.png \
+              $out/share/icons/hicolor/''${size}x''${size}/apps/vimma.png
+          done
         '';
       };
-
-      vimma = mkFhs "vimma" "vimma";
 
       # vimma-ctl is a static musl binary, no sandbox needed.
       vimma-ctl = pkgs.runCommand "vimma-ctl-${version}" { } ''
