@@ -22,6 +22,27 @@
         tar -xf ${src} -C $out --strip-components=1
       '';
 
+      # vimma-open is not in the tarball: upstream's packaging script emits it
+      # into each distro package. Rather than vendor a copy that goes stale,
+      # take it from the release's own PKGBUILD, pinned to the same version as
+      # the tarball so the two can never disagree.
+      pkgbuild = pkgs.fetchurl {
+        url = "https://github.com/vimma-browser/vimma/releases/download/v${version}/PKGBUILD";
+        # == sha256 from the release's SHA256SUMS:
+        # 0f6a4174257e18b6bb5e4873d7a7df8fb23b0dd0d92e8a2e7ee5346762f2e7a8
+        hash = "sha256-D2pBdCV+GLa7Xkhz16ffj7I7DdDZLooufuU0Z2Ly56g=";
+      };
+
+      # The script sits in a quoted heredoc, so the span between the
+      # delimiters is already verbatim. The shebang check is the guard: if
+      # upstream renames the heredoc the span comes out empty or wrong, and
+      # the build fails here rather than at launch time.
+      vimma-open-src = pkgs.runCommand "vimma-open-${version}.sh" { } ''
+        sed -n "/<<'VIMMA_OPEN_EOF'/,/^VIMMA_OPEN_EOF$/p" ${pkgbuild} \
+          | sed '1d;$d' > $out
+        head -1 $out | grep -qx '#!/bin/sh'
+      '';
+
       # Firefox-ish runtime closure. The tarball is a stock Gecko dist dir, so
       # rather than patchelf'ing ~15 .so files we just hand it an FHS sandbox.
       runtimeDeps = p: with p; [
@@ -53,7 +74,7 @@
         Name=Vimma
         GenericName=Web Browser
         Comment=Browse the web from the keyboard
-        Exec=@out@/bin/vimma %U
+        Exec=@out@/bin/vimma-open %u
         Icon=vimma
         Terminal=false
         StartupNotify=true
@@ -86,6 +107,11 @@
         # Exec points at the FHS wrapper, not the dist binary, so a launcher
         # starts the browser through the same sandbox the shell does.
         extraInstallCommands = ''
+          # Installed beside bin/vimma on purpose: the script resolves the
+          # browser as "the vimma next to this script", so sitting here makes
+          # it find the FHS wrapper with no further wiring.
+          install -Dm755 ${vimma-open-src} $out/bin/vimma-open
+
           install -d $out/share/applications
           substitute ${desktopEntry} $out/share/applications/vimma.desktop \
             --subst-var out

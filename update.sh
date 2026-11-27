@@ -38,15 +38,27 @@ if [[ -z "$hex" ]]; then
   exit 1
 fi
 
-sri=$(nix hash convert --hash-algo sha256 --to sri "$hex")
+# The PKGBUILD is pinned too: vimma-open is extracted from it, so it has to
+# move in lockstep with the tarball or the browser and its launcher could come
+# from different releases.
+pkgbuild_hex=$(awk '$2 == "PKGBUILD" { print $1 }' <<<"$sums")
+if [[ -z "$pkgbuild_hex" ]]; then
+  echo "no PKGBUILD in SHA256SUMS for $tag" >&2
+  exit 1
+fi
 
-# Three pinned sites: the version line (whose trailing comment names both
-# versions), the hex digest kept as a comment so it can be diffed against
-# SHA256SUMS by eye, and the SRI hash fetchurl actually checks.
+sri=$(nix hash convert --hash-algo sha256 --to sri "$hex")
+pkgbuild_sri=$(nix hash convert --hash-algo sha256 --to sri "$pkgbuild_hex")
+
+# The version line (whose trailing comment names both versions), then each
+# fetchurl's pair of a hex digest kept as a comment, so it can be diffed
+# against SHA256SUMS by eye, and the SRI hash fetchurl actually checks.
+# The two fetchurl stanzas are edited by range: an unscoped substitution would
+# stamp the tarball's digest onto the PKGBUILD as well.
 sed -i \
   -e "s|^\([[:space:]]*\)version = \"[^\"]*\";.*$|\1version = \"$version\"; # Vimma $version - Firefox $firefox|" \
-  -e "s|^\([[:space:]]*\)# [0-9a-f]\{64\}$|\1# $hex|" \
-  -e "s|^\([[:space:]]*\)hash = \"sha256-[^\"]*\";|\1hash = \"$sri\";|" \
+  -e "/src = pkgs.fetchurl {/,/};/{s|^\([[:space:]]*\)# [0-9a-f]\{64\}$|\1# $hex|;s|^\([[:space:]]*\)hash = \"sha256-[^\"]*\";|\1hash = \"$sri\";|}" \
+  -e "/pkgbuild = pkgs.fetchurl {/,/};/{s|^\([[:space:]]*\)# [0-9a-f]\{64\}$|\1# $pkgbuild_hex|;s|^\([[:space:]]*\)hash = \"sha256-[^\"]*\";|\1hash = \"$pkgbuild_sri\";|}" \
   "$flake"
 
 echo
